@@ -53,10 +53,12 @@ final class SettingsStoreTests: XCTestCase {
     func testAppearancePersists() {
         let defaults = makeDefaults()
         let first = SettingsStore(userDefaults: defaults)
-        first.appearance = .dark
 
-        let second = SettingsStore(userDefaults: defaults)
-        XCTAssertEqual(second.appearance, .dark)
+        for appearance in [Appearance.light, .dark, .system] {
+            first.appearance = appearance
+            let reloaded = SettingsStore(userDefaults: defaults)
+            XCTAssertEqual(reloaded.appearance, appearance)
+        }
     }
 
     func testBadgeModePersists() {

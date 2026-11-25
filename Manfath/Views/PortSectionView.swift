@@ -12,7 +12,7 @@ struct PortSectionView<RowContent: View>: View {
     let row: (PortInfo) -> RowContent
 
     var body: some View {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: 0) {
             header
             if !isCollapsed {
                 ForEach(Array(ports.enumerated()), id: \.element.id) { idx, port in
@@ -62,9 +62,10 @@ struct PortSectionView<RowContent: View>: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
-            .background(Color.black.opacity(0.12))
+            .background(Theme.chromeShade.opacity(0.12))
         }
         .buttonStyle(.plain)
+        .hoverFeedback(radius: 0)
     }
 }
 

@@ -145,15 +145,53 @@ final class PortScannerTests: XCTestCase {
         ])
         let scanner = PortScanner(source: source)
 
-        var iter = scanner.snapshots.makeAsyncIterator()
+        var iter = await scanner.updates().makeAsyncIterator()
 
         await scanner.refreshNow()
         let first = await iter.next()
-        XCTAssertEqual(first?.count, 1)
+        XCTAssertEqual(first?.changedPorts?.count, 1)
 
         await scanner.refreshNow()
         let second = await iter.next()
-        XCTAssertEqual(second?.count, 2)
+        XCTAssertEqual(second?.changedPorts?.count, 2)
+    }
+
+    func testSuccessfulEmptyAndUnchangedScansReportCompletion() async {
+        let scanner = PortScanner(source: ScriptedSource(scripts: [[], []]))
+        var updates = await scanner.updates().makeAsyncIterator()
+
+        await scanner.refreshNow()
+        await scanner.refreshNow()
+        let first = await updates.next()
+        let second = await updates.next()
+
+        XCTAssertNotNil(first)
+        XCTAssertNotNil(second)
+        XCTAssertNil(first?.changedPorts)
+        XCTAssertNil(second?.changedPorts)
+        if let first, let second { XCTAssertGreaterThanOrEqual(second.completedAt, first.completedAt) }
+        let count = await scanner.emissionCount
+        XCTAssertEqual(count, 0)
+    }
+
+    func testRefreshesShareActiveScanAndCancelledResultIsDiscarded() async {
+        let source = ControlledSource(result: [port(3000, firstSeenAt: t0)])
+        let scanner = PortScanner(source: source)
+        await scanner.start(interval: .seconds(3))
+        await source.waitForStart()
+
+        async let manualRefresh: Void = scanner.refreshNow()
+        await scanner.stop()
+        await source.complete()
+        await source.waitForStart()
+        let current = await scanner.currentPorts
+        XCTAssertTrue(current.isEmpty)
+        await source.complete()
+        await manualRefresh
+
+        let counts = await source.counts
+        XCTAssertEqual(counts.calls, 2)
+        XCTAssertEqual(counts.peak, 1)
     }
 
     // MARK: - Start/stop
@@ -205,4 +243,36 @@ actor ScriptedSource: PortSource {
 struct FailingSource: PortSource {
     struct Boom: Error {}
     func snapshot() async throws -> [PortInfo] { throw Boom() }
+}
+
+/// Lets a test complete a scan even after its caller has been cancelled.
+private actor ControlledSource: PortSource {
+    let result: [PortInfo]
+    var counts = (calls: 0, peak: 0)
+    private var running: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(result: [PortInfo]) { self.result = result }
+
+    func snapshot() async throws -> [PortInfo] {
+        counts.calls += 1
+        await withCheckedContinuation { continuation in
+            running.append(continuation)
+            counts.peak = max(counts.peak, running.count)
+            for waiter in waiters { waiter.resume() }
+            waiters.removeAll()
+        }
+        return result
+    }
+
+    func waitForStart() async {
+        if running.isEmpty {
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+
+    func complete() {
+        for scan in running { scan.resume() }
+        running.removeAll()
+    }
 }

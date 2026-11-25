@@ -47,28 +47,13 @@ struct RootView: View {
                     .foregroundStyle(Theme.inkDim)
             }
             Spacer()
-            Text(headerMeta)
+            ScanStatusLabel(store: store)
                 .font(Theme.monoSize(11))
                 .foregroundStyle(Theme.inkFaint)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(Color.black.opacity(0.2))
-    }
-
-    private var headerMeta: String {
-        let count = store.filteredPorts.count
-        guard let at = store.lastRefreshAt else {
-            return String(localized: "popover.header.metaCold \(count)")
-        }
-        let elapsed = Date().timeIntervalSince(at)
-        let unit: String
-        if elapsed < 60 {
-            unit = String(format: "%.1fs", elapsed)
-        } else {
-            unit = "\(Int(elapsed / 60))m"
-        }
-        return String(localized: "popover.header.meta \(count) \(unit)")
+        .background(Theme.chromeShade.opacity(0.2))
     }
 
     // MARK: - Search
@@ -113,13 +98,15 @@ struct RootView: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture { searchFocused = true }
+        .hoverFeedback(radius: 0)
     }
 
     // MARK: - Rows / empty state
 
     @ViewBuilder
     private var content: some View {
-        if store.filteredPorts.isEmpty {
+        let ports = store.filteredPorts
+        if ports.isEmpty {
             EmptyStateView(hasSearch: !store.searchText.isEmpty)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -139,9 +126,9 @@ struct RootView: View {
                             )
                         }
                     case .list:
-                        ForEach(Array(store.filteredPorts.enumerated()), id: \.element.id) { idx, port in
+                        ForEach(Array(ports.enumerated()), id: \.element.id) { idx, port in
                             makeRow(port)
-                            if idx < store.filteredPorts.count - 1 {
+                            if idx < ports.count - 1 {
                                 Rectangle()
                                     .fill(Theme.line)
                                     .frame(height: 1)
@@ -238,8 +225,10 @@ struct RootView: View {
 
     // MARK: - Footer
 
+    private static let footerControlSpacing: CGFloat = 2
+
     private var footer: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Self.footerControlSpacing) {
             HStack(spacing: 6) {
                 BlinkingDot(color: Theme.amberSoft, size: 5, glow: 6)
                 Text(scanCadenceLabel)
@@ -252,11 +241,10 @@ struct RootView: View {
             Button {
                 Task { await store.refreshNow() }
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.inkFaint)
+                footerIcon("arrow.clockwise", verticalOffset: -0.5)
             }
             .buttonStyle(.plain)
+            .hoverFeedback()
             .keyboardShortcut("r", modifiers: .command)
             .help("popover.refreshNow")
 
@@ -271,16 +259,29 @@ struct RootView: View {
                     from: nil
                 )
             } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.inkFaint)
+                footerIcon("gearshape")
             }
             .buttonStyle(.plain)
+            .hoverFeedback()
             .keyboardShortcut(",", modifiers: .command)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.15))
+        .background(Theme.chromeShade.opacity(0.15))
+    }
+
+    private func footerIcon(
+        _ symbol: String,
+        size: CGFloat = 11,
+        selected: Bool = false,
+        verticalOffset: CGFloat = 0
+    ) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .regular))
+            .foregroundStyle(selected ? Theme.ink : Theme.inkDim)
+            .offset(y: verticalOffset)
+            .frame(width: 28, height: 22)
+            .contentShape(Rectangle())
     }
 
     /// Footer pin menu — lets the user toggle preset groups without
@@ -303,13 +304,13 @@ struct RootView: View {
                 }
             }
         } label: {
-            Image(systemName: "pin")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.inkFaint)
+            footerIcon("pin", size: 10)
         }
-        .menuStyle(.borderlessButton)
+        // The plain button style lets the menu use the same bounds as the other actions.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .hoverFeedback()
         .help("popover.pinMenu.help")
     }
 
@@ -329,30 +330,32 @@ struct RootView: View {
     /// through `settings.viewMode`.
     private var viewModeToggle: some View {
         HStack(spacing: 0) {
-            viewModeSegment(.sections, icon: "rectangle.3.group")
-            viewModeSegment(.list, icon: "list.bullet")
+            viewModeSegment(.sections, icon: "list.bullet.below.rectangle", size: 10)
+            viewModeSegment(.list, icon: "list.bullet", size: 11)
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(Theme.line, lineWidth: 1)
-        )
+        .background(Theme.ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 5))
     }
 
-    private func viewModeSegment(_ mode: PopoverViewMode, icon: String) -> some View {
+    private func viewModeSegment(_ mode: PopoverViewMode, icon: String, size: CGFloat) -> some View {
         let active = store.settings.viewMode == mode
+        let title: LocalizedStringKey = mode == .sections ? "popover.viewMode.sections" : "popover.viewMode.list"
         return Button {
             store.settings.viewMode = mode
         } label: {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(active ? Theme.ink : Theme.inkFaint)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(active ? Theme.ink.opacity(0.06) : .clear)
-                .contentShape(Rectangle())
+            footerIcon(icon, size: size, selected: active)
+                .background {
+                    if active {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Theme.ink.opacity(0.18))
+                            .padding(2)
+                    }
+                }
         }
         .buttonStyle(.plain)
-        .help(mode == .sections ? "popover.viewMode.sections" : "popover.viewMode.list")
+        .hoverFeedback(radius: 3, outset: -2)
+        .accessibilityLabel(Text(title))
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .help(title)
     }
 
     private var scanCadenceLabel: String {
@@ -401,5 +404,31 @@ struct RootView: View {
         case .info:    return ("info.circle.fill",             Theme.amber)
         case .error:   return ("exclamationmark.triangle.fill", Theme.danger)
         }
+    }
+}
+
+private struct ScanStatusLabel: View {
+    let store: PortStore
+    @Environment(PopoverVisibility.self) private var visibility
+
+    var body: some View {
+        let count = store.filteredPorts.count
+        if let lastScan = store.lastRefreshAt {
+            if visibility.isVisible {
+                TimelineView(.periodic(from: lastScan, by: 1)) { context in
+                    elapsedLabel(count: count, since: lastScan, now: context.date)
+                }
+            } else {
+                elapsedLabel(count: count, since: lastScan, now: Date())
+            }
+        } else {
+            Text(String(localized: "popover.header.metaCold \(count)"))
+        }
+    }
+
+    private func elapsedLabel(count: Int, since lastScan: Date, now: Date) -> Text {
+        let elapsed = max(0, now.timeIntervalSince(lastScan))
+        let unit = elapsed < 60 ? String(format: "%.1fs", elapsed) : "\(Int(elapsed / 60))m"
+        return Text(String(localized: "popover.header.meta \(count) \(unit)"))
     }
 }

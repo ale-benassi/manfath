@@ -97,7 +97,7 @@ final class PortStoreTests: XCTestCase {
             port(3000, name: "Node"),
             port(3001, name: "python"),
         ])
-        store.searchText = "NODE"
+        store.searchText = " nOD "
 
         XCTAssertEqual(store.filteredPorts.map(\.port), [3000])
     }
@@ -111,6 +111,40 @@ final class PortStoreTests: XCTestCase {
         store.searchText = "12"   // matches 1234 and 1299
 
         XCTAssertEqual(store.filteredPorts.map(\.port), [3000, 3002])
+    }
+
+    func testSearchByFrameworkLabelInListAndSections() {
+        let astro = port(4321, name: "node")
+        let next = port(3000, name: "node")
+        let store = makeStore([astro, next, port(8080, name: "node")])
+        store.searchText = "AsTr"
+        XCTAssertTrue(store.filteredPorts.isEmpty)
+
+        store.applyEnrichment(id: astro.id, enrichment: Enrichment(framework: .astro, category: .devServer))
+        store.applyEnrichment(id: next.id, enrichment: Enrichment(framework: .nextjs, category: .devServer))
+
+        XCTAssertEqual(store.filteredPorts.map(\.port), [4321])
+        XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [4321])
+
+        store.searchText = "Next.J"
+        XCTAssertEqual(store.filteredPorts.map(\.port), [3000])
+        XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [3000])
+    }
+
+    func testSearchByFullProjectNameInListAndSections() {
+        let astro = port(4321, name: "node")
+        let store = makeStore([astro, port(3000, name: "node")])
+        store.applyEnrichment(id: astro.id, enrichment: Enrichment(
+            framework: .astro,
+            projectName: "alebenassi-com",
+            category: .devServer
+        ))
+
+        for query in ["aleben", "NASSI-COM"] {
+            store.searchText = query
+            XCTAssertEqual(store.filteredPorts.map(\.port), [4321])
+            XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [4321])
+        }
     }
 
     func testEmptySearchReturnsAll() {
@@ -206,6 +240,59 @@ final class PortStoreTests: XCTestCase {
         XCTAssertNotNil(store.lastRefreshAt)
     }
 
+    func testManualRefreshUpdatesTimestampAfterStoreRestarts() async throws {
+        let scanner = PortScanner(source: ScriptedSource(scripts: [[]]))
+        let settings = SettingsStore(minPort: 0)
+        settings.refreshInterval = .manual
+        let store = PortStore(scanner: scanner, settings: settings)
+
+        store.start()
+        await store.refreshNow()
+        try await waitUntil(timeout: 1) { store.lastRefreshAt != nil }
+        let first = try XCTUnwrap(store.lastRefreshAt)
+
+        store.stop()
+        store.start()
+        defer { store.stop() }
+        await store.refreshNow()
+        try await waitUntil(timeout: 1) { (store.lastRefreshAt ?? .distantPast) > first }
+        XCTAssertTrue(store.ports.isEmpty)
+    }
+
+    func testChurnOnlyEnrichesLivePortOnceAndCancelsRemovedPort() async throws {
+        let stable = port(3000)
+        let transient = port(3001)
+        let provider = DelayedProvider()
+        let store = PortStore(
+            scanner: PortScanner(source: FailingSource()),
+            settings: SettingsStore(minPort: 0),
+            enrichmentCoordinator: EnrichmentCoordinator(providers: [provider])
+        )
+        store.receive([stable, transient])
+        try await waitUntil(timeout: 1) { provider.calls.count == 2 }
+
+        store.receive([stable])
+        store.receive([stable, transient])
+        try await waitUntil(timeout: 1) { provider.calls.count >= 3 }
+        try await waitUntil(timeout: 1) { store.ports.allSatisfy { $0.enrichment != nil } }
+
+        XCTAssertEqual(provider.calls.filter { $0 == stable.port }.count, 1)
+        XCTAssertEqual(provider.calls.filter { $0 == transient.port }.count, 2)
+        XCTAssertEqual(provider.cancelled, [transient.port])
+    }
+
+    func testCachedSectionsFollowGroupEditsAndSortChanges() {
+        let store = makeStore([port(3000), port(3001)])
+        XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [3000, 3001])
+
+        store.sortMode = .portDescending
+        XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [3001, 3000])
+
+        store.settings.portGroups = [PortGroup(name: "Pinned", ports: [3000])]
+        XCTAssertEqual(store.sectionedPorts.flatMap(\.ports).map(\.port), [3000, 3001])
+        XCTAssertEqual(store.sectionedPorts.first?.titleKey, "Pinned")
+    }
+
     // MARK: - Lifecycle
 
     func testStartIsIdempotent() {
@@ -234,5 +321,22 @@ final class PortStoreTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Condition not met within \(timeout)s")
+    }
+}
+
+@MainActor
+private final class DelayedProvider: EnrichmentProvider {
+    nonisolated let id = "delayed"
+    private(set) var calls: [UInt16] = []
+    private(set) var cancelled: [UInt16] = []
+
+    func enrich(_ port: PortInfo) async -> Enrichment {
+        calls.append(port.port)
+        do {
+            try await Task.sleep(for: .milliseconds(120))
+        } catch {
+            cancelled.append(port.port)
+        }
+        return Enrichment(projectName: "fixture")
     }
 }

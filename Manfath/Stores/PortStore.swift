@@ -8,7 +8,9 @@ import Observation
 @MainActor @Observable
 public final class PortStore {
 
-    public private(set) var ports: [PortInfo] = []
+    public private(set) var ports: [PortInfo] = [] {
+        didSet { filteredCache = nil }
+    }
     public private(set) var lastRefreshAt: Date?
 
     /// Primary IPv4 on the LAN (Wi-Fi or Ethernet), refreshed
@@ -30,9 +32,12 @@ public final class PortStore {
     public private(set) var bannerKind: BannerKind = .error
     private var errorClearTask: Task<Void, Never>?
 
-    private var subscriptionTask: Task<Void, Never>?
-    private var enrichmentSubscriptionTask: Task<Void, Never>?
-    private var lanRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var subscriptionTask: Task<Void, Never>?
+    @ObservationIgnored private var scanConfigurationTask: Task<Void, Never>?
+    @ObservationIgnored private var scanSession: UUID?
+    @ObservationIgnored private var enrichmentTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var portIndices: [String: Int] = [:]
+    @ObservationIgnored private var lanRefreshTask: Task<Void, Never>?
 
     public init(
         scanner: PortScanner,
@@ -51,56 +56,54 @@ public final class PortStore {
     public func start() {
         guard subscriptionTask == nil else { return }
 
-        let stream = scanner.snapshots
-        subscriptionTask = Task { [weak self] in
-            for await snap in stream {
-                self?.receive(snap)
+        let session = UUID()
+        scanSession = session
+        subscriptionTask = Task { [weak self, scanner] in
+            let stream = await scanner.updates()
+            for await update in stream {
+                guard let self, self.scanSession == session else { return }
+                if let changed = update.changedPorts { self.receive(changed) }
+                self.lastRefreshAt = update.completedAt
             }
         }
 
-        if let coordinator = enrichmentCoordinator {
-            let results = coordinator.results
-            enrichmentSubscriptionTask = Task { [weak self] in
-                for await result in results {
-                    self?.applyEnrichment(id: result.id, enrichment: result.enrichment)
-                }
-            }
-        }
-
-        trackRefreshInterval()
+        trackRefreshInterval(session: session)
         startLANRefresh()
     }
 
     /// Re-arms on every `settings.refreshInterval` change and restarts
     /// the scanner with the new cadence. `.manual` stops the auto loop.
-    private func trackRefreshInterval() {
-        withObservationTracking {
-            applyRefreshInterval(settings.refreshInterval)
-        } onChange: {
-            Task { @MainActor [weak self] in
-                self?.trackRefreshInterval()
+    private func trackRefreshInterval(session: UUID) {
+        guard scanSession == session else { return }
+        let interval = withObservationTracking {
+            settings.refreshInterval
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.trackRefreshInterval(session: session)
             }
         }
-    }
-
-    private func applyRefreshInterval(_ interval: RefreshInterval) {
-        Task { [scanner] in
-            await scanner.stop()
-            if interval.isAutomatic {
-                await scanner.start(interval: interval.duration)
-            }
+        let previous = scanConfigurationTask
+        previous?.cancel()
+        scanConfigurationTask = Task { [scanner] in
+            await previous?.value
+            await scanner.start(interval: interval.isAutomatic ? interval.duration : nil)
         }
     }
 
     /// Stop the scan loop and cancel the subscription. Idempotent.
     public func stop() {
-        subscriptionTask?.cancel()
-        subscriptionTask = nil
-        enrichmentSubscriptionTask?.cancel()
-        enrichmentSubscriptionTask = nil
+        guard let subscriptionTask else { return }
+        scanSession = nil
+        subscriptionTask.cancel()
+        self.subscriptionTask = nil
+        for task in enrichmentTasks.values { task.cancel() }
+        enrichmentTasks.removeAll()
         lanRefreshTask?.cancel()
         lanRefreshTask = nil
-        Task { [scanner] in
+        let previous = scanConfigurationTask
+        previous?.cancel()
+        scanConfigurationTask = Task { [scanner] in
+            await previous?.value
             await scanner.stop()
         }
     }
@@ -113,13 +116,14 @@ public final class PortStore {
                 try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { return }
                 let next = LANAddressService.primaryIPv4()
-                self?.lanIPv4 = next
+                if self?.lanIPv4 != next { self?.lanIPv4 = next }
             }
         }
     }
 
     /// Force an immediate scan without waiting for the next tick.
     public func refreshNow() async {
+        await scanConfigurationTask?.value
         await scanner.refreshNow()
     }
 
@@ -131,39 +135,44 @@ public final class PortStore {
     /// every tick). Ports that arrive without enrichment are dispatched
     /// to the coordinator for lookup.
     func receive(_ snapshot: [PortInfo]) {
-        let oldById = Dictionary(uniqueKeysWithValues: ports.map { ($0.id, $0) })
         let merged = snapshot.map { new -> PortInfo in
-            if new.enrichment == nil, let old = oldById[new.id], old.enrichment != nil {
+            if new.enrichment == nil, let index = portIndices[new.id],
+               ports[index].firstSeenAt == new.firstSeenAt, let enrichment = ports[index].enrichment {
                 var out = new
-                out.enrichment = old.enrichment
+                out.enrichment = enrichment
                 return out
             }
             return new
         }
 
-        self.ports = merged
-        self.lastRefreshAt = Date()
+        let nextIndices = Dictionary(uniqueKeysWithValues: merged.enumerated().map { ($1.id, $0) })
+        for (id, task) in enrichmentTasks {
+            if let old = portIndices[id], let next = nextIndices[id],
+               ports[old].firstSeenAt == merged[next].firstSeenAt, merged[next].enrichment == nil {
+                continue
+            }
+            task.cancel()
+            enrichmentTasks[id] = nil
+        }
+        portIndices = nextIndices
+        if ports != merged { ports = merged }
 
         guard let coordinator = enrichmentCoordinator else { return }
-
-        let currentIds = Set(merged.map(\.id))
-        Task { await coordinator.invalidate(keeping: currentIds) }
-
-        for port in merged where port.enrichment == nil {
-            Task { [port] in
-                await coordinator.enrich(port)
+        for port in merged where port.enrichment == nil && enrichmentTasks[port.id] == nil {
+            let id = port.id
+            enrichmentTasks[id] = Task { [weak self] in
+                guard !Task.isCancelled else { return }
+                let enrichment = await coordinator.enrich(port)
+                guard !Task.isCancelled, let self else { return }
+                self.enrichmentTasks[id] = nil
+                self.applyEnrichment(id: id, enrichment: enrichment)
             }
         }
     }
 
-    /// Applied on the main actor when the coordinator emits a result.
-    /// Merges into the matching `PortInfo` in `ports`; if the port has
-    /// since disappeared, the update is dropped.
     func applyEnrichment(id: String, enrichment: Enrichment) {
-        guard let idx = ports.firstIndex(where: { $0.id == id }) else { return }
-        var updated = ports[idx]
-        updated.enrichment = enrichment
-        ports[idx] = updated
+        guard let index = portIndices[id], ports[index].enrichment != enrichment else { return }
+        ports[index].enrichment = enrichment
     }
 
     // MARK: - Row actions
@@ -217,39 +226,65 @@ public final class PortStore {
 
     // MARK: - Derived view state
 
+    private struct FilterInputs: Equatable {
+        let blocklist: [String]
+        let minPort: UInt16
+        let maxPort: UInt16
+        let realOnly: Bool
+        let groups: [PortGroup]
+        let query: String
+        let sort: SortMode
+    }
+
+    private struct FilteredCache {
+        let inputs: FilterInputs
+        let ports: [PortInfo]
+        var sections: [PortSection]?
+    }
+
+    @ObservationIgnored private var filteredCache: FilteredCache?
+
     /// Filter order per ARCHITECTURE §7: blocklist → port range →
     /// real-server filter → search text → sort.
     public var filteredPorts: [PortInfo] {
-        let blocklist = Set(settings.processBlocklist.map { $0.lowercased() })
-        let minPort = settings.minPort
-        let maxPort = settings.maxPort
-        let realOnly = settings.showOnlyRealServers
-        let groups = settings.portGroups
-        let query = searchText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+        // Read all observable inputs even on a cache hit. The popover
+        // and menu bar badge each track their own reads.
+        let snapshot = ports
+        let inputs = FilterInputs(
+            blocklist: settings.processBlocklist,
+            minPort: settings.minPort,
+            maxPort: settings.maxPort,
+            realOnly: settings.showOnlyRealServers,
+            groups: settings.portGroups,
+            query: searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            sort: sortMode
+        )
+        if let cached = filteredCache, cached.inputs == inputs { return cached.ports }
 
-        let filtered = ports.filter { port in
-            // Pinned groups override the range filter — if you've
-            // explicitly favorited a port, you want to see it.
-            let inAGroup = groups.contains { $0.contains(port.port) }
-            if !inAGroup {
-                guard port.port >= minPort, port.port <= maxPort else { return false }
-            }
+        let blocklist = Set(inputs.blocklist.map { $0.lowercased() })
+        let query = inputs.query
+        let filtered = snapshot.filter { port in
             guard !blocklist.contains(port.processName.lowercased()) else { return false }
             // Hide non-real-server categories when the filter is on.
             // We give an as-yet-unenriched port the benefit of the doubt
             // so it doesn't blink in and out as enrichment lands.
-            if realOnly, !inAGroup, let cat = port.enrichment?.category, !cat.isRealServer {
-                return false
+            let inRange = port.port >= inputs.minPort && port.port <= inputs.maxPort
+            let passesCategory = !inputs.realOnly || port.enrichment?.category?.isRealServer != false
+            if !inRange || !passesCategory {
+                // Pinned groups override the range and server filter.
+                guard inputs.groups.contains(where: { $0.contains(port.port) }) else { return false }
             }
             if query.isEmpty { return true }
             return String(port.port).contains(query)
                 || port.processName.lowercased().contains(query)
                 || String(port.pid).contains(query)
+                || port.enrichment?.framework?.rowLabel?.lowercased().contains(query) == true
+                || port.enrichment?.projectName?.lowercased().contains(query) == true
         }
 
-        return filtered.sorted(by: comparator(for: sortMode))
+        let sorted = filtered.sorted(by: comparator(for: inputs.sort))
+        filteredCache = FilteredCache(inputs: inputs, ports: sorted)
+        return sorted
     }
 
     /// Sections in render order: pinned groups first, then auto
@@ -259,15 +294,20 @@ public final class PortStore {
     /// by the detected framework. If no framework hint is available
     /// the first matching group in the user's defined order wins.
     public var sectionedPorts: [PortSection] {
+        let filtered = filteredPorts
+        if let cached = filteredCache?.sections { return cached }
         let groups = settings.portGroups
         var sections: [PortSection] = []
         var groupBuckets: [UUID: [PortInfo]] = [:]
-        var consumed: Set<String> = []
+        var buckets: [ProcessCategory: [PortInfo]] = [:]
 
-        for port in filteredPorts {
-            guard let group = Self.bestGroup(for: port, candidates: groups) else { continue }
-            groupBuckets[group.id, default: []].append(port)
-            consumed.insert(port.id)
+        for port in filtered {
+            if let group = Self.bestGroup(for: port, candidates: groups) {
+                groupBuckets[group.id, default: []].append(port)
+            } else {
+                let category = port.enrichment?.category ?? .unknown
+                buckets[category, default: []].append(port)
+            }
         }
 
         // Render groups in user-defined order, skipping empties.
@@ -277,17 +317,12 @@ public final class PortStore {
             }
         }
 
-        // Auto categories for everything not claimed by a group.
-        var buckets: [ProcessCategory: [PortInfo]] = [:]
-        for port in filteredPorts where !consumed.contains(port.id) {
-            let cat = port.enrichment?.category ?? .unknown
-            buckets[cat, default: []].append(port)
-        }
         for cat in ProcessCategory.allCases {
             if let portsInCat = buckets[cat], !portsInCat.isEmpty {
                 sections.append(.category(category: cat, ports: portsInCat))
             }
         }
+        filteredCache?.sections = sections
         return sections
     }
 
@@ -295,15 +330,13 @@ public final class PortStore {
     /// list the same port, prefer the one whose `presetId` matches the
     /// detected framework; otherwise fall through to user order.
     static func bestGroup(for port: PortInfo, candidates: [PortGroup]) -> PortGroup? {
-        let matching = candidates.filter { $0.contains(port.port) }
-        if matching.count <= 1 { return matching.first }
-
-        if let framework = port.enrichment?.framework, framework != .unknown,
-           let expected = presetId(for: framework),
-           let preferred = matching.first(where: { $0.presetId == expected }) {
-            return preferred
+        let expected = port.enrichment?.framework.flatMap(presetId(for:))
+        var first: PortGroup?
+        for group in candidates where group.contains(port.port) {
+            if let expected, group.presetId == expected { return group }
+            if first == nil { first = group }
         }
-        return matching.first
+        return first
     }
 
     /// Map a `FrameworkHint` to the matching preset id from
@@ -332,9 +365,9 @@ public final class PortStore {
     /// Real-server count for the optional badge / settings counter.
     /// Counts only categories where `isRealServer == true`.
     public var realServerCount: Int {
-        filteredPorts.filter {
-            ($0.enrichment?.category ?? .unknown).isRealServer
-        }.count
+        filteredPorts.reduce(into: 0) { count, port in
+            if port.enrichment?.category?.isRealServer == true { count += 1 }
+        }
     }
 
     private func comparator(for mode: SortMode) -> (PortInfo, PortInfo) -> Bool {

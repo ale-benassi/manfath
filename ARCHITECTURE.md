@@ -112,20 +112,19 @@ Three zones, explicit boundaries:
 |------|-----------|------------------|
 | Main | `@MainActor` | All UI, all `@Observable` stores |
 | Scan | `actor PortScanner` | lsof subprocess, parsing, diffing |
-| Enrich | `actor EnrichmentCoordinator` | HTTP probes, cwd reads |
+| Enrich | `EnrichmentCoordinator` and provider tasks | HTTP probes, cwd reads |
 
 **Data flow per tick:**
 
-1. `PortStore` has a long-lived `Task` that awaits
-   `scanner.nextSnapshot()` (AsyncStream).
+1. `PortStore` subscribes to the scanner's `AsyncStream<ScanUpdate>`.
 2. `PortScanner` runs lsof every N seconds (configurable), parses,
-   diffs against previous snapshot, yields a new `[PortInfo]`.
-3. `PortStore` receives snapshot on MainActor, updates `ports` array.
-   SwiftUI diffs and animates.
-4. For each newly-appeared port, `PortStore` fires
-   `enrichmentCoordinator.enrich(port)` tasks in parallel.
-5. Enrichment results flow back via a separate AsyncStream; PortStore
-   merges them into the matching `PortInfo` by id.
+   diffs against the previous snapshot, and reports the successful
+   completion time. It includes rows only when they changed.
+3. `PortStore` records completion on MainActor. Only changed rows
+   replace the `ports` array.
+4. `PortStore` starts one enrichment task per live port without a
+   result. It cancels the task if the port disappears or the store stops,
+   and applies the result only while the task is current.
 
 **No shared mutable state across actors.** Snapshots are values.
 
@@ -146,11 +145,12 @@ source without touching the store.
 
 ### `LsofPortSource`
 
-- Runs `/usr/sbin/lsof -iTCP -sTCP:LISTEN -nP -F pcnuLP` in a `Process`
+- Runs `/usr/sbin/lsof -iTCP -sTCP:LISTEN -nP -F pcLftPn` in a `Process`
   with a `Pipe` on stdout.
 - `-F` produces field-mode output: one record per line prefixed by a
   field char. Easier and faster to parse than columnar.
-- 2s timeout on the subprocess. Kill if it hangs.
+- `Subprocess` drains stdout and stderr while lsof runs. It terminates
+  the child on cancellation or after a two second scan timeout.
 - Returns `[PortInfo]` with `enrichment = nil` and `commandPath = nil`.
 
 ### `LsofParser`
@@ -174,21 +174,22 @@ Owns the loop:
 ```swift
 actor PortScanner {
     private let source: PortSource
-    private var lastSnapshot: [String: PortInfo] = [:]  // keyed by id
-    private var continuation: AsyncStream<[PortInfo]>.Continuation?
+    func updates() -> AsyncStream<ScanUpdate> { ... }
 
-    var snapshots: AsyncStream<[PortInfo]> { ... }
-
-    func start(interval: Duration) { ... }
+    func start(interval: Duration?) { ... }
     func stop() { ... }
     func refreshNow() async { ... }
 }
 ```
 
 - Preserves `firstSeenAt` by looking up each scanned port in
-  `lastSnapshot` and copying the timestamp forward.
-- Emits a snapshot only if it differs from the previous (by id set or
-  by any field). Prevents SwiftUI re-diff on identical frames.
+  the previous snapshot and copying the timestamp forward.
+- Schedules starts using fixed intervals on a monotonic clock.
+  An overrun waits one interval after completion
+  before trying again, avoiding back-to-back scans after a stall.
+- Periodic and manual requests share an active scan. Switching from an
+  automatic interval cancels its active scan. Cancelled and failed scans
+  leave the last successful rows and timestamp in place.
 
 ---
 
@@ -199,7 +200,7 @@ signal as an independent async provider.
 
 ```swift
 protocol EnrichmentProvider: Sendable {
-    func enrich(_ port: PortInfo) async -> Enrichment.Partial
+    func enrich(_ port: PortInfo) async -> Enrichment
 }
 ```
 
@@ -207,17 +208,14 @@ Providers (run in parallel per port):
 
 | Provider | What it adds | How |
 |----------|--------------|-----|
-| `HTTPProbeProvider` | `httpStatus`, `httpLatencyMs`, `framework` hint from headers | `URLSession` HEAD with 500ms timeout |
-| `CwdProvider` | `workingDirectory`, `projectName` | `lsof -p PID -Fn` then look for package.json/Cargo.toml/pyproject.toml/go.mod |
-| `DockerProvider` | `dockerContainer` | `which docker`, then `docker ps --format {{.ID}}:{{.Names}}:{{.Ports}}` matched by port |
-| `CommandPathProvider` | `commandPath` | `lsof -p PID -Fn` (shared call with CwdProvider — dedupe) |
+| `HTTPProbeProvider` | `httpStatus`, `httpLatencyMs`, `framework` hint from headers | `URLSession` HEAD with an 800 ms timeout |
+| `CwdProvider` | Working directory, project, framework, executable, and open file count | `lsof -p PID -Fnct`, process arguments, and project manifests |
 
 ### `EnrichmentCoordinator`
 
-- Keyed cache: `[PortInfo.ID: Enrichment]`.
-- On `enrich(port)`: if cached and cache younger than 60s, return. Else
-  fan out to providers with `async let`, merge partials, cache, emit.
-- Cache invalidation: when a port disappears, its entry is dropped.
+- Runs the providers in a task group and classifies the merged result.
+- `PortStore` retains enrichment while it continuously sees the same
+  port identity. Another port on the same process runs its own HTTP probe.
 
 **Frameworks detected in v1** (via HTTP headers/body sniff):
 Next.js, Vite, Create React App, Rails, Django, Flask, Express,
@@ -234,19 +232,24 @@ Spring, Rust (Rocket/Actix), Go stdlib, generic. `.unknown` is fine.
 final class PortStore {
     private(set) var ports: [PortInfo] = []
     private(set) var lastRefreshAt: Date?
-    private(set) var isScanning: Bool = false
 
     var searchText: String = ""
     var sortMode: SortMode = .portAscending
 
     var filteredPorts: [PortInfo] { /* apply search + settings filters */ }
 
-    func start() { /* subscribe to scanner + enrichment streams */ }
+    func start() { /* subscribe to scanner updates */ }
     func refreshNow() async { ... }
 }
 ```
 
-Filtering order: settings blocklist → port range → search text → sort.
+Filtering applies the process blocklist, port range, server filter, search,
+and sort. Pinned groups override the range and server filters. The store
+reuses the derived list and sections while the rows and inputs are the same.
+
+Both list and section views use the same search results. Search matches
+substrings in the port, process name, PID, framework label, and full project
+name, ignoring case.
 
 ### `SettingsStore` — @Observable wrapper over UserDefaults
 
@@ -299,6 +302,10 @@ Views/
 - Views take stores via `@Environment` (one store per environment key).
 - No view performs I/O. Actions call store methods.
 - `PortRow` is pure presentation + closure callbacks for actions.
+- Use `hoverFeedback` from `Theme.swift` for popover hover highlights. It
+  draws a fill or outline around the existing control and honors disabled state.
+  The port action pills use their existing action colors and reveal their labels
+  without animation when Reduce Motion is on. Native menu items use macOS feedback.
 - Monospaced digits: `.monospacedDigit()` on the port number.
 - RTL: no hard-coded leading/trailing; use `HStack` with
   `.environment(\.layoutDirection, ...)` only for number sequences
@@ -307,9 +314,13 @@ Views/
 ### Badge rendering
 
 `MenuBarController` watches `portStore.filteredPorts.count` and
-`settings.badgeMode`, redraws the `NSStatusItem.button.image` as a
-composited `network` symbol + count text. Use `NSImage` with
-`isTemplate = true` for automatic dark/light.
+`settings.badgeMode`. It updates the status item's title when the
+displayed badge changes and skips counting while the badge is hidden.
+
+The AppKit popover delegate provides visibility to SwiftUI. The two
+status dots animate only while the popover is visible and Reduce Motion
+is off. A separate header view tracks the elapsed time since the last
+successful scan, so an unchanged scan doesn't trigger list rendering.
 
 ---
 
@@ -329,8 +340,10 @@ actor ProcessController {
 - `kill` shells out to `/bin/kill`. If exit code indicates EPERM,
   return `.requiresPrivileges` — UI shows an error, never prompts for
   sudo.
-- `inspect` runs `lsof -p PID` and returns working dir, open file
-  count, command path.
+- `inspect` runs `lsof -p PID -Fnct` and returns working directory, open
+  file count, and command path. It uses the same pipe handling as the
+  scanner and allows up to five seconds for a large process. Concurrent
+  requests for the same PID share an inspection while any caller needs it.
 
 ### `TunnelProvider` protocol
 
@@ -389,17 +402,15 @@ T+0s    PortScanner fires.
 T+0s    LsofPortSource runs lsof, returns 5 PortInfo (enrichment nil).
 T+0s    Scanner diffs: 1 new (pid 47213, port 5173), 4 same.
 T+0s    Scanner preserves firstSeenAt on the 4, stamps new port.
-T+0s    Scanner yields [PortInfo] on snapshots stream.
+T+0s    Scanner reports completion and sends the changed rows.
 T+0ms   PortStore receives on MainActor, replaces ports array.
         SwiftUI ForEach animates the new row in.
 T+5ms   PortStore calls enrichmentCoordinator.enrich(newPort).
-T+5ms   Coordinator fans out: HTTP probe, cwd lookup, docker check in
-        parallel.
+T+5ms   Coordinator runs the HTTP probe and cwd lookup in parallel.
 T+180ms HTTP probe returns 200, Server: "Vite". framework = .vite.
 T+220ms Cwd lookup returns /Users/me/projects/site with package.json
         name "my-site".
-T+260ms Docker returns nil.
-T+260ms Coordinator merges, emits Enrichment for the port id.
+T+260ms Coordinator returns the merged enrichment for the port.
 T+260ms PortStore merges enrichment into the matching PortInfo.
         Row subtitle updates from "node 47213" to "Vite · my-site".
 ```
@@ -408,14 +419,15 @@ T+260ms PortStore merges enrichment into the matching PortInfo.
 
 ## 11. Settings window
 
-Separate AppKit `NSWindow` hosting a SwiftUI `TabView`. Opened via
-footer gear or `⌘,`. Not part of the popover — popover dismisses on
-focus loss, which would be hostile to editing settings.
+The footer gear and `⌘,` open a separate AppKit `NSWindow` with native window controls.
+A SwiftUI sidebar switches between **General**, **Filters & Groups**, and
+**About**. The sidebar and pane headings share a top inset below the title bar.
+Settings sections use the same surface, text, and separator colors as the
+popover, alongside native pickers, toggles, and text fields.
 
-Tabs: **General** (interval, hotkey, appearance, launch at login),
-**Filters** (min port, blocklist editor), **Tunnels** (provider list,
-install status, per-provider config), **About** (version, credits,
-licenses, update note pointing at Homebrew).
+The saved appearance sets the AppKit app appearance. Both the Settings window
+and menu bar popover use the app's effective appearance, which follows macOS
+when System is selected. The shared palette resolves its colors for that appearance.
 
 ---
 
@@ -440,7 +452,7 @@ licenses, update note pointing at Homebrew).
 | Tunnel logs (recent) | In-memory only | Ephemeral |
 | Pinned ports + aliases | `UserDefaults` | Small |
 | Activity log (Tier-3) | `~/Library/Application Support/Manfath/activity.sqlite` | Queryable, bounded |
-| Enrichment cache | In-memory only | Rebuilds in <1s on launch |
+| Enrichment results | In memory with the live ports | Rebuilt as ports appear |
 
 ---
 
@@ -463,8 +475,8 @@ licenses, update note pointing at Homebrew).
 | Layer | Coverage |
 |-------|----------|
 | `LsofParser` | Heavy unit tests with fixtures. This is the riskiest code. |
-| `PortScanner` | Test with a mock `PortSource` that yields scripted snapshots. Verify firstSeenAt preservation and diff suppression. |
-| `EnrichmentCoordinator` | Mock providers, verify cache behavior and parallel fan-out. |
+| `PortScanner` | Scripted snapshots cover first-seen timestamps, completion, diff suppression, and cancellation. |
+| Enrichment | Mock providers cover merging and request lifetime when ports appear and disappear. |
 | `PortStore` | Verify filtering, sorting, search. |
 | `CloudflaredProvider` | Integration test behind a compile flag; skipped in CI. |
 | UI | Snapshot tests for `PortRow` states (idle, hover, inspected, tunneling) using `swift-snapshot-testing` if added. Optional. |

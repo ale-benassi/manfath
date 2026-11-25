@@ -13,9 +13,12 @@ struct PortRow: View {
     let onTunnelReady: (URL) -> Void
 
     @Environment(TunnelStore.self) private var tunnelStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
     @State private var isExpanded = false
     @State private var killHovering = false
+    @State private var showsKillLabel = false
     @State private var killHoverDebounce: Task<Void, Never>?
     @State private var confirmingKill = false
     @State private var confirmResetTask: Task<Void, Never>?
@@ -36,12 +39,10 @@ struct PortRow: View {
                 )
             }
         }
-        .background(
-            isHovering || isExpanded
-                ? Theme.ink.opacity(0.025)
-                : Color.clear
-        )
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .background {
+            (isExpanded || (isEnabled && isHovering) ? Theme.ink.opacity(0.025) : .clear)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isHovering)
+        }
         .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .onChange(of: tunnelStore.tunnels[port.port]?.status) { _, newStatus in
             if autoCopyOnReady, case .running(let url) = newStatus {
@@ -95,6 +96,7 @@ struct PortRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .hoverFeedback(outset: 3)
 
             // Action pills — opacity .35 at rest, full on row hover.
             HStack(spacing: 6) {
@@ -112,8 +114,8 @@ struct PortRow: View {
                 )
                 killPill
             }
-            .opacity(isHovering ? 1.0 : 0.35)
-            .animation(.easeInOut(duration: 0.15), value: isHovering)
+            .opacity(isEnabled && isHovering ? 1.0 : 0.35)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isHovering)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -132,8 +134,7 @@ struct PortRow: View {
     ///   - both:      project + pid (framework conveyed by the icon)
     private var dimSuffix: String {
         var parts: [String] = []
-        if showLabel, let hint = port.enrichment?.framework,
-           let label = Self.frameworkLabel(for: hint) {
+        if showLabel, let label = port.enrichment?.framework?.rowLabel {
             parts.append(label)
         }
         if let proj = port.enrichment?.projectName, !proj.isEmpty {
@@ -167,27 +168,6 @@ struct PortRow: View {
     /// truly compact — the brand icon already identifies the runtime.
     private var showProcessName: Bool {
         rowDisplay != .iconOnly
-    }
-
-    private static func frameworkLabel(for hint: FrameworkHint) -> String? {
-        switch hint {
-        case .nextjs:     return "next.js"
-        case .vite:       return "vite"
-        case .cra:        return "cra"
-        case .rails:      return "rails"
-        case .django:     return "django"
-        case .flask:      return "flask"
-        case .express:    return "express"
-        case .spring:     return "spring"
-        case .rustRocket: return "rocket"
-        case .rustActix:  return "actix"
-        case .goStdlib:   return "go"
-        case .nuxt:       return "nuxt"
-        case .astro:      return "astro"
-        case .svelte:     return "svelte"
-        case .remix:      return "remix"
-        case .unknown:    return nil
-        }
     }
 
     // MARK: - Tunnel
@@ -225,7 +205,7 @@ struct PortRow: View {
     // MARK: - Kill pill (hover styling + two-tap confirm)
 
     private var killPill: some View {
-        let labelExpanded = killHovering || confirmingKill
+        let labelExpanded = (isEnabled && showsKillLabel) || confirmingKill
         return Button(action: handleKillTap) {
             HStack(spacing: 4) {
                 Image(systemName: confirmingKill ? "exclamationmark.triangle.fill" : "trash")
@@ -260,35 +240,36 @@ struct PortRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
+            killHovering = hovering
             killHoverDebounce?.cancel()
             if hovering {
                 killHoverDebounce = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(220))
-                    if !Task.isCancelled { killHovering = true }
+                    if !Task.isCancelled { showsKillLabel = true }
                 }
             } else {
-                killHovering = false
+                showsKillLabel = false
                 resetKillConfirm()
             }
         }
-        .animation(.easeInOut(duration: 0.28), value: killHovering)
-        .animation(.easeInOut(duration: 0.18), value: confirmingKill)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: showsKillLabel)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: confirmingKill)
         .help(confirmingKill ? "row.confirmKill \(Int(port.pid))" : "row.killPid \(Int(port.pid))")
     }
 
     private var killTextColor: Color {
-        if confirmingKill { return .white }
-        return killHovering ? Theme.danger : Theme.inkDim
+        if confirmingKill { return Theme.onDanger }
+        return isEnabled && killHovering ? Theme.danger : Theme.inkDim
     }
 
     private var killBackground: Color {
         if confirmingKill { return Theme.danger }
-        return killHovering ? Theme.danger.opacity(0.06) : .clear
+        return isEnabled && killHovering ? Theme.danger.opacity(0.14) : .clear
     }
 
     private var killBorder: Color {
         if confirmingKill { return Theme.danger }
-        return killHovering ? Theme.danger.opacity(0.3) : Theme.line
+        return isEnabled && killHovering ? Theme.danger.opacity(0.5) : Theme.line
     }
 
     private func handleKillTap() {

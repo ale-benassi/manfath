@@ -21,83 +21,128 @@ struct GeneralTab: View {
     }
 
     var body: some View {
-        Form {
-            Section {
-                Picker("Refresh", selection: $settings.refreshInterval) {
-                    ForEach(RefreshInterval.allCases, id: \.self) { interval in
-                        Text(interval.label).tag(interval)
-                    }
-                }
-
-                Picker("Appearance", selection: $settings.appearance) {
-                    ForEach(Appearance.allCases, id: \.self) { appearance in
-                        Text(appearance.label).tag(appearance)
-                    }
-                }
-
-                Picker("Menu bar badge", selection: $settings.badgeMode) {
-                    ForEach(BadgeMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-
-                Picker("rowDisplay.title", selection: $settings.rowDisplay) {
-                    ForEach(RowDisplay.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .help("rowDisplay.help")
-
-                Picker("tunnelProvider.title", selection: $settings.tunnelProvider) {
-                    ForEach(TunnelProviderChoice.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .help("tunnelProvider.help")
-
-                Picker("Language", selection: $settings.language) {
-                    ForEach(Language.allCases, id: \.self) { lang in
-                        Text(lang.label).tag(lang)
-                    }
-                }
-
-                if needsRestart {
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.secondary)
-                        Text("language.restartRequired")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Button("language.restartNow") {
-                            NSApp.sendAction(
-                                #selector(AppDelegate.relaunchApp(_:)),
-                                to: nil,
-                                from: nil
-                            )
+        VStack(alignment: .leading, spacing: 20) {
+            SettingsSection(inset: 0) {
+                VStack(spacing: 0) {
+                    preferencePicker("Refresh", selection: $settings.refreshInterval) {
+                        ForEach(RefreshInterval.allCases, id: \.self) { interval in
+                            Text(interval.label).tag(interval)
                         }
+                    }
+                    rowDivider
+
+                    preferencePicker("Appearance", selection: $settings.appearance) {
+                        ForEach(Appearance.allCases, id: \.self) { appearance in
+                            Text(appearance.label).tag(appearance)
+                        }
+                    }
+                    rowDivider
+
+                    preferencePicker("Menu bar badge", selection: $settings.badgeMode) {
+                        ForEach(BadgeMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    rowDivider
+
+                    preferencePicker("rowDisplay.title", selection: $settings.rowDisplay) {
+                        ForEach(RowDisplay.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .help("rowDisplay.help")
+                    rowDivider
+
+                    preferencePicker("tunnelProvider.title", selection: $settings.tunnelProvider) {
+                        ForEach(TunnelProviderChoice.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .help("tunnelProvider.help")
+                    rowDivider
+
+                    preferencePicker("Language", selection: $settings.language) {
+                        ForEach(Language.allCases, id: \.self) { lang in
+                            Text(lang.label).tag(lang)
+                        }
+                    }
+
+                    if needsRestart {
+                        rowDivider
+                        HStack(spacing: 8) {
+                            Label("language.restartRequired", systemImage: "info.circle")
+                                .font(.caption)
+                                .foregroundStyle(Theme.inkDim)
+                            Spacer()
+                            Button("language.restartNow") {
+                                NSApp.sendAction(
+                                    #selector(AppDelegate.relaunchApp(_:)),
+                                    to: nil,
+                                    from: nil
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                     }
                 }
             }
 
-            Section("Shortcut") {
+            SettingsSection(title: "Shortcut", inset: 0) {
                 KeyboardShortcuts.Recorder(
                     "Toggle popover",
                     name: .togglePopover
                 )
             }
 
-            Section("Launch") {
-                Toggle(
-                    "Launch Manfath at login",
-                    isOn: Binding(
-                        get: { settings.launchAtLogin },
-                        set: { settings.setLaunchAtLogin($0) }
+            SettingsSection(title: "Launch", inset: 0) {
+                LabeledContent("Launch Manfath at login") {
+                    Toggle(
+                        "Launch Manfath at login",
+                        isOn: Binding(
+                            get: { settings.launchAtLogin },
+                            set: { settings.setLaunchAtLogin($0) }
+                        )
                     )
-                )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .hoverFeedback(outset: 2)
+                }
             }
         }
-        .formStyle(.grouped)
-        .padding()
+        .labeledContentStyle(PreferenceRowStyle())
+    }
+
+    private var rowDivider: some View {
+        SettingsDivider().padding(.horizontal, 12)
+    }
+
+    private func preferencePicker<Value: Hashable, Options: View>(
+        _ title: LocalizedStringKey,
+        selection: Binding<Value>,
+        @ViewBuilder options: () -> Options
+    ) -> some View {
+        LabeledContent(title) {
+            Picker(title, selection: selection, content: options)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .buttonStyle(.borderless)
+                .fixedSize(horizontal: true, vertical: false)
+                .hoverFeedback(outset: 2)
+        }
+    }
+}
+
+private struct PreferenceRowStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+            Spacer(minLength: 0)
+            configuration.content
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(minHeight: 36)
     }
 }
