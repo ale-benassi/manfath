@@ -13,15 +13,12 @@ struct BrandIconDescriptor: Equatable {
 }
 
 /// Lookup table from preset id (`PresetGroups`) and process names to
-/// brand visuals. Tints are taken from each brand's official color
-/// where they read well on a dark surface; brands whose mark is
-/// black-on-white (Next.js, Remix, Rust, Bun, Deno, …) are forced
-/// to the warm-ink color so they stay visible on the popover gradient.
+/// brand visuals. Monochrome marks use the popover's adaptive ink so
+/// they stay visible in both appearances.
 enum BrandIcons {
 
     // Brand colors that read well on Theme.surfaceLo / surfaceHi.
     // Hex values from Simple Icons brand metadata.
-    private static let inkOnDark    = Theme.ink                                       // #e8e4da
     private static let cReact       = Color(red:  97/255, green: 218/255, blue: 251/255) // #61DAFB
     private static let cVite        = Color(red: 100/255, green: 108/255, blue: 255/255) // #646CFF
     private static let cAstro       = Color(red: 188/255, green:  82/255, blue: 238/255) // #BC52EE
@@ -52,29 +49,28 @@ enum BrandIcons {
     private static let cPHP         = Color(red: 119/255, green: 123/255, blue: 180/255) // #777BB4
     private static let cJava        = Color(red: 237/255, green: 139/255, blue:   0/255) // #ED8B00
     private static let cMinIO       = Color(red: 195/255, green:  39/255, blue:  43/255) // C3272B
-    private static let cFlask       = Color(red: 220/255, green: 220/255, blue: 220/255)
 
     /// Preset id (e.g. `"preset.nextjs"`) → descriptor.
     static func forPreset(_ id: String) -> BrandIconDescriptor {
         switch id {
-        case "preset.nextjs":    return .init(source: .asset("Brands/nextdotjs"),    tint: inkOnDark)
+        case "preset.nextjs":    return .init(source: .asset("Brands/nextdotjs"),    tint: Theme.ink)
         case "preset.react":     return .init(source: .asset("Brands/react"),         tint: cReact)
         case "preset.vite":      return .init(source: .asset("Brands/vite"),          tint: cVite)
         case "preset.tanstack":  return .init(source: .sfSymbol("square.stack.3d.up.fill"), tint: Theme.amber)
         case "preset.astro":     return .init(source: .asset("Brands/astro"),         tint: cAstro)
         case "preset.svelte":    return .init(source: .asset("Brands/svelte"),        tint: cSvelte)
         case "preset.nuxt":      return .init(source: .asset("Brands/nuxt"),          tint: cNuxt)
-        case "preset.remix":     return .init(source: .asset("Brands/remix"),         tint: inkOnDark)
+        case "preset.remix":     return .init(source: .asset("Brands/remix"),         tint: Theme.ink)
 
-        case "preset.express":   return .init(source: .asset("Brands/express"),       tint: inkOnDark)
-        case "preset.django":    return .init(source: .asset("Brands/django"),        tint: inkOnDark)
-        case "preset.flask":     return .init(source: .asset("Brands/flask"),         tint: cFlask)
+        case "preset.express":   return .init(source: .asset("Brands/express"),       tint: Theme.ink)
+        case "preset.django":    return .init(source: .asset("Brands/django"),        tint: Theme.ink)
+        case "preset.flask":     return .init(source: .asset("Brands/flask"),         tint: Theme.ink)
         case "preset.rails":     return .init(source: .asset("Brands/rubyonrails"),   tint: cRubyOnRails)
         case "preset.spring":    return .init(source: .asset("Brands/spring"),        tint: cSpring)
         case "preset.laravel":   return .init(source: .asset("Brands/laravel"),       tint: cLaravel)
         case "preset.dotnet":    return .init(source: .asset("Brands/dotnet"),        tint: cDotnet)
         case "preset.gohttp":    return .init(source: .asset("Brands/go"),            tint: cGo)
-        case "preset.actix":     return .init(source: .asset("Brands/rust"),          tint: inkOnDark)
+        case "preset.actix":     return .init(source: .asset("Brands/rust"),          tint: Theme.ink)
 
         case "preset.postgres":      return .init(source: .asset("Brands/postgresql"),     tint: cPostgres)
         case "preset.mysql":         return .init(source: .asset("Brands/mysql"),          tint: cMySQL)
@@ -90,7 +86,7 @@ enum BrandIcons {
         case "preset.firebase":  return .init(source: .asset("Brands/firebase"),      tint: cFirebase)
         case "preset.appwrite":  return .init(source: .asset("Brands/appwrite"),      tint: cAppwrite)
 
-        case "preset.kafka":     return .init(source: .asset("Brands/apachekafka"),   tint: inkOnDark)
+        case "preset.kafka":     return .init(source: .asset("Brands/apachekafka"),   tint: Theme.ink)
         case "preset.rabbitmq":  return .init(source: .asset("Brands/rabbitmq"),      tint: cRabbitMQ)
         case "preset.nats":      return .init(source: .sfSymbol("dot.radiowaves.up.forward"), tint: Theme.cyan)
 
@@ -119,8 +115,8 @@ enum BrandIcons {
         switch lower {
         // Runtimes
         case "node":                    return .init(source: .asset("Brands/nodedotjs"),  tint: cNode)
-        case "deno":                    return .init(source: .asset("Brands/deno"),       tint: inkOnDark)
-        case "bun":                     return .init(source: .asset("Brands/bun"),        tint: inkOnDark)
+        case "deno":                    return .init(source: .asset("Brands/deno"),       tint: Theme.ink)
+        case "bun":                     return .init(source: .asset("Brands/bun"),        tint: Theme.ink)
         case "python", "python3":       return .init(source: .asset("Brands/python"),     tint: cPython)
         case "ruby":                    return .init(source: .asset("Brands/ruby"),       tint: cRubyOnRails)
         case "java":                    return .init(source: .asset("Brands/openjdk"),    tint: cJava)
@@ -147,21 +143,21 @@ enum BrandIcons {
 
     private static func forFramework(_ hint: FrameworkHint) -> BrandIconDescriptor? {
         switch hint {
-        case .nextjs:     return .init(source: .asset("Brands/nextdotjs"), tint: inkOnDark)
+        case .nextjs:     return .init(source: .asset("Brands/nextdotjs"), tint: Theme.ink)
         case .vite:       return .init(source: .asset("Brands/vite"),      tint: cVite)
         case .cra:        return .init(source: .asset("Brands/react"),     tint: cReact)
         case .rails:      return .init(source: .asset("Brands/rubyonrails"), tint: cRubyOnRails)
-        case .django:     return .init(source: .asset("Brands/django"),    tint: inkOnDark)
-        case .flask:      return .init(source: .asset("Brands/flask"),     tint: cFlask)
-        case .express:    return .init(source: .asset("Brands/express"),   tint: inkOnDark)
+        case .django:     return .init(source: .asset("Brands/django"),    tint: Theme.ink)
+        case .flask:      return .init(source: .asset("Brands/flask"),     tint: Theme.ink)
+        case .express:    return .init(source: .asset("Brands/express"),   tint: Theme.ink)
         case .spring:     return .init(source: .asset("Brands/spring"),    tint: cSpring)
         case .rustRocket, .rustActix:
-                          return .init(source: .asset("Brands/rust"),      tint: inkOnDark)
+                          return .init(source: .asset("Brands/rust"),      tint: Theme.ink)
         case .goStdlib:   return .init(source: .asset("Brands/go"),        tint: cGo)
         case .nuxt:       return .init(source: .asset("Brands/nuxt"),      tint: cNuxt)
         case .astro:      return .init(source: .asset("Brands/astro"),     tint: cAstro)
         case .svelte:     return .init(source: .asset("Brands/svelte"),    tint: cSvelte)
-        case .remix:      return .init(source: .asset("Brands/remix"),     tint: inkOnDark)
+        case .remix:      return .init(source: .asset("Brands/remix"),     tint: Theme.ink)
         case .unknown:    return nil
         }
     }

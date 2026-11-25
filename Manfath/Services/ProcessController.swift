@@ -20,15 +20,28 @@ public struct ProcessDetails: Equatable, Sendable {
 /// Process management: kill signals, inspect via lsof. All shell-outs
 /// use absolute paths per ARCHITECTURE §1.
 public actor ProcessController {
+    private struct Inspection {
+        let task: Task<ProcessDetails, Error>
+        var waiters: Set<UUID>
+    }
 
-    public init() {}
+    private let readDetails: @Sendable (Int32) async throws -> ProcessDetails
+    private var inspections: [Int32: Inspection] = [:]
+
+    public init() {
+        readDetails = { try await Self.inspectProcess(pid: $0) }
+    }
+
+    init(readDetails: @escaping @Sendable (Int32) async throws -> ProcessDetails) {
+        self.readDetails = readDetails
+    }
 
     // MARK: - Kill
 
     public func kill(pid: Int32, signal: Int32 = SIGTERM) async -> KillResult {
         let args = ["-\(signal)", "\(pid)"]
         do {
-            let result = try await Self.runProcess(
+            let result = try await Subprocess.run(
                 path: "/bin/kill",
                 arguments: args
             )
@@ -46,9 +59,41 @@ public actor ProcessController {
     // MARK: - Inspect
 
     public func inspect(pid: Int32) async throws -> ProcessDetails {
-        let result = try await Self.runProcess(
+        try Task.checkCancellation()
+        let waiter = UUID()
+        let task: Task<ProcessDetails, Error>
+        if let existing = inspections[pid]?.task {
+            inspections[pid]?.waiters.insert(waiter)
+            task = existing
+        } else {
+            task = Task { [readDetails] in try await readDetails(pid) }
+            inspections[pid] = Inspection(task: task, waiters: [waiter])
+        }
+
+        // Several ports from the same process can arrive in one scan.
+        // Keep inspecting while any of those ports still needs the result.
+        return try await withTaskCancellationHandler {
+            defer { finishInspection(pid: pid, waiter: waiter) }
+            let details = try await task.value
+            try Task.checkCancellation()
+            return details
+        } onCancel: {
+            Task { await self.finishInspection(pid: pid, waiter: waiter) }
+        }
+    }
+
+    private func finishInspection(pid: Int32, waiter: UUID) {
+        guard inspections[pid]?.waiters.remove(waiter) != nil else { return }
+        if inspections[pid]?.waiters.isEmpty == true {
+            inspections.removeValue(forKey: pid)?.task.cancel()
+        }
+    }
+
+    private static func inspectProcess(pid: Int32) async throws -> ProcessDetails {
+        let result = try await Subprocess.run(
             path: "/usr/sbin/lsof",
-            arguments: ["-p", "\(pid)", "-Fnct"]
+            arguments: ["-p", "\(pid)", "-Fnct"],
+            timeout: 5
         )
         // lsof returns 1 when it finds no matching files for a pid;
         // treat as "process has no files" rather than an error.
@@ -108,45 +153,4 @@ public actor ProcessController {
         )
     }
 
-    // MARK: - Process runner
-
-    private struct ProcessResult {
-        let exitCode: Int32
-        let stdout: String
-        let stderr: String
-    }
-
-    private static func runProcess(
-        path: String,
-        arguments: [String]
-    ) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = arguments
-
-            let out = Pipe()
-            let err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-
-            process.terminationHandler = { proc in
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                let errData = err.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(
-                    returning: ProcessResult(
-                        exitCode: proc.terminationStatus,
-                        stdout: String(data: outData, encoding: .utf8) ?? "",
-                        stderr: String(data: errData, encoding: .utf8) ?? ""
-                    )
-                )
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-    }
 }

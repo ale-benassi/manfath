@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var tunnelStore: TunnelStore?
     private var menuBar: MenuBarController?
     private var settingsWindow: NSWindow?
+    private var effectiveAppearanceObservation: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let scanner = PortScanner(source: LsofPortSource())
@@ -33,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.menuBar = MenuBarController(store: store, tunnelStore: tunnelStore)
 
         trackAppearance()
+        observeEffectiveAppearance()
         trackTunnelPruning()
     }
 
@@ -86,6 +88,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observeEffectiveAppearance() {
+        effectiveAppearanceObservation = NSApp.observe(\.effectiveAppearance, options: [.initial]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                let appearance = NSApp.effectiveAppearance
+                self?.menuBar?.setAppearance(appearance)
+                self?.settingsWindow?.appearance = appearance
+            }
+        }
+    }
+
     // MARK: - Settings window
 
     @objc func openSettings(_ sender: Any?) {
@@ -95,11 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 rootView: SettingsView(settings: store.settings)
             )
             let window = NSWindow(contentViewController: hosting)
-            window.title = "Manfath Settings"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            window.title = String(localized: "settings.window.title")
+            window.appearance = NSApp.effectiveAppearance
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 760, height: 520))
-            window.minSize = NSSize(width: 720, height: 480)
+            window.contentMinSize = NSSize(width: 720, height: 480)
             window.center()
             settingsWindow = window
         }

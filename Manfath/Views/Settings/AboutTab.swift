@@ -2,41 +2,43 @@ import SwiftUI
 
 struct AboutTab: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Image("Logo")
-                .resizable()
-                .interpolation(.high)
-                .frame(width: 96, height: 96)
+        SettingsSection(inset: 16) {
+            HStack(spacing: 14) {
+                Image("Logo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
 
-            VStack(spacing: 4) {
-                Text("Manfath")
-                    .font(.system(size: 22, weight: .semibold))
-                Text(versionLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Manfath")
+                        .font(.system(size: 17, weight: .semibold))
+                    Text(versionLine)
+                        .font(Theme.monoSize(11))
+                        .foregroundStyle(Theme.inkDim)
+                    Text("A localhost port dashboard for developers.")
+                        .font(.callout)
+                        .foregroundStyle(Theme.inkDim)
+                }
             }
 
-            Text("A localhost port dashboard for developers.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            SettingsDivider().padding(.vertical, 6)
 
             Text("about.updateNote")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-
-            Spacer()
+                .font(.callout)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 16) {
                 Link("Source", destination: URL(string: "https://github.com/Dnymte/manfath")!)
+                    .hoverFeedback(outset: 2)
                 Link("Report an issue", destination: URL(string: "https://github.com/Dnymte/manfath/issues")!)
+                    .hoverFeedback(outset: 2)
             }
-            .font(.caption)
+            .font(.callout.weight(.medium))
+            .foregroundStyle(Theme.amber)
+            .padding(.top, 4)
         }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var versionLine: String {

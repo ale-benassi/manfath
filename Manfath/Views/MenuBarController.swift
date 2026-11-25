@@ -3,16 +3,22 @@ import SwiftUI
 import Observation
 import KeyboardShortcuts
 
+@MainActor @Observable
+final class PopoverVisibility {
+    var isVisible = false
+}
+
 /// Owns the `NSStatusItem` in the menu bar and the `NSPopover` that
 /// hosts the SwiftUI `RootView`. The badge updates reactively via
 /// `withObservationTracking` — no polling.
 @MainActor
-final class MenuBarController: NSObject {
+final class MenuBarController: NSObject, NSPopoverDelegate {
 
     private let store: PortStore
     private let tunnelStore: TunnelStore
     private let statusItem: NSStatusItem
     private let popover: NSPopover
+    private let visibility = PopoverVisibility()
 
     init(store: PortStore, tunnelStore: TunnelStore) {
         self.store = store
@@ -41,15 +47,27 @@ final class MenuBarController: NSObject {
 
     private func configurePopover() {
         popover.behavior = .transient
+        popover.delegate = self
         popover.contentSize = NSSize(width: 420, height: 560)
-        // Match the popover gradient — without this the system fills
-        // the rounded corners with the default vibrant material.
-        popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(
             rootView: RootView(store: store)
                 .environment(tunnelStore)
                 .environment(store.settings)
+                .environment(visibility)
         )
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        visibility.isVisible = true
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        visibility.isVisible = false
+    }
+
+    func setAppearance(_ appearance: NSAppearance) {
+        // Keep the popover material and its SwiftUI content in the same appearance.
+        popover.appearance = appearance
     }
 
     // MARK: - Status item
@@ -133,9 +151,11 @@ final class MenuBarController: NSObject {
     /// change, `onChange` fires and we re-track.
     private func trackBadge() {
         withObservationTracking {
-            updateBadge(count: store.filteredPorts.count, mode: store.settings.badgeMode)
-        } onChange: {
-            Task { @MainActor [weak self] in
+            let mode = store.settings.badgeMode
+            let count = mode == .hidden ? 0 : store.filteredPorts.count
+            updateBadge(count: count, mode: mode)
+        } onChange: { [weak self] in
+            Task { @MainActor in
                 self?.trackBadge()
             }
         }
@@ -143,13 +163,15 @@ final class MenuBarController: NSObject {
 
     private func updateBadge(count: Int, mode: BadgeMode) {
         guard let button = statusItem.button else { return }
+        let title: String
         switch mode {
         case .count:
-            button.title = count > 0 ? " \(count)" : ""
+            title = count > 0 ? " \(count)" : ""
         case .dot:
-            button.title = count > 0 ? " •" : ""
+            title = count > 0 ? " •" : ""
         case .hidden:
-            button.title = ""
+            title = ""
         }
+        if button.title != title { button.title = title }
     }
 }

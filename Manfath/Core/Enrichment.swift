@@ -76,4 +76,25 @@ public enum FrameworkHint: String, Codable, Hashable, Sendable {
     case svelte
     case remix
     case unknown
+
+    var rowLabel: String? {
+        switch self {
+        case .nextjs:     return "next.js"
+        case .vite:       return "vite"
+        case .cra:        return "cra"
+        case .rails:      return "rails"
+        case .django:     return "django"
+        case .flask:      return "flask"
+        case .express:    return "express"
+        case .spring:     return "spring"
+        case .rustRocket: return "rocket"
+        case .rustActix:  return "actix"
+        case .goStdlib:   return "go"
+        case .nuxt:       return "nuxt"
+        case .astro:      return "astro"
+        case .svelte:     return "svelte"
+        case .remix:      return "remix"
+        case .unknown:    return nil
+        }
+    }
 }

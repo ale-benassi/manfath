@@ -88,6 +88,7 @@ struct InspectPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.tint)
+                    .hoverFeedback(outset: 2)
                 } else {
                     notInstalledView
                 }
@@ -130,6 +131,7 @@ struct InspectPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
+                    .hoverFeedback(outset: 2)
 
                     Button {
                         onCopy(url.absoluteString)
@@ -139,6 +141,7 @@ struct InspectPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
+                    .hoverFeedback(outset: 2)
 
                     ShareLink(item: url) {
                         Label("tunnel.share", systemImage: "square.and.arrow.up")
@@ -146,6 +149,7 @@ struct InspectPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
+                    .hoverFeedback(outset: 2)
 
                     Spacer(minLength: 0)
                     stopButton
@@ -203,6 +207,7 @@ struct InspectPanel: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.tint)
+            .hoverFeedback(outset: 2)
 
             HStack(spacing: 6) {
                 SecureField(
@@ -211,6 +216,7 @@ struct InspectPanel: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .font(.caption.monospaced())
+                .hoverFeedback(.outline)
                 .disabled(savingAuthtoken)
                 .onSubmit { submitAuthtoken() }
 
@@ -225,6 +231,7 @@ struct InspectPanel: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
+                .hoverFeedback(.outline)
                 .disabled(savingAuthtoken
                           || authtokenInput.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -264,6 +271,7 @@ struct InspectPanel: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.red)
+        .hoverFeedback(outset: 2)
     }
 
     private var dismissButton: some View {
@@ -275,6 +283,7 @@ struct InspectPanel: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
+        .hoverFeedback(outset: 2)
         .help("Dismiss")
     }
 
@@ -310,6 +319,7 @@ struct InspectPanel: View {
                             .font(.caption2)
                     }
                     .buttonStyle(.borderless)
+                    .hoverFeedback(outset: 2)
                     .help("Copy install command")
                     Button {
                         Task { await tunnelStore.refreshInstallState() }
@@ -318,6 +328,7 @@ struct InspectPanel: View {
                             .font(.caption2)
                     }
                     .buttonStyle(.borderless)
+                    .hoverFeedback(outset: 2)
                     .help("Re-check install")
                 }
             }
@@ -347,6 +358,7 @@ struct InspectPanel: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
+                .hoverFeedback(outset: 2)
             }
 
             Spacer(minLength: 4)
@@ -426,6 +438,7 @@ struct InspectPanel: View {
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
+        .hoverFeedback()
         .help(help)
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FiltersTab: View {
     @Bindable var settings: SettingsStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var newBlockItem: String = ""
     @State private var addingCustomGroup: Bool = false
@@ -14,44 +15,39 @@ struct FiltersTab: View {
     @State private var editPorts: String = ""
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                visibleRangeCard
-                pinnedGroupsCard
-                suggestedGroupsCard
-                blocklistCard
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 20) {
+            visibleRangeCard
+            pinnedGroupsCard
+            suggestedGroupsCard
+            blocklistCard
         }
-        .scrollIndicators(.automatic)
     }
 
     // MARK: - Visible range
 
     private var visibleRangeCard: some View {
-        Card(title: "filters.visibleRange.title") {
+        SettingsSection(title: "filters.visibleRange.title") {
             HStack(spacing: 12) {
                 rangeField(value: $settings.minPort, placeholder: "1024")
                 Text(verbatim: "—")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkDim)
                 rangeField(value: $settings.maxPort, placeholder: "65535")
                 Spacer()
             }
 
             Text("filters.visibleRange.help")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.inkDim)
                 .padding(.top, 2)
 
-            Divider().padding(.vertical, 4)
+            SettingsDivider().padding(.vertical, 4)
 
             Toggle(isOn: $settings.showOnlyRealServers) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("filters.showOnlyRealServers")
                     Text("filters.showOnlyRealServersHelp")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkDim)
                 }
             }
         }
@@ -72,30 +68,30 @@ struct FiltersTab: View {
     // MARK: - Pinned groups (current state)
 
     private var pinnedGroupsCard: some View {
-        Card(title: "filters.pinnedGroups") {
+        SettingsSection(title: "filters.pinnedGroups") {
             if settings.portGroups.isEmpty && !addingCustomGroup {
                 Text("filters.noGroups")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkDim)
                     .padding(.vertical, 4)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(settings.portGroups.enumerated()), id: \.element.id) { idx, group in
                         groupRow(group)
                         if idx < settings.portGroups.count - 1 {
-                            Divider()
+                            SettingsDivider()
                         }
                     }
                 }
             }
 
-            Divider().padding(.vertical, 4)
+            SettingsDivider().padding(.vertical, 4)
 
             if addingCustomGroup {
                 customGroupInlineEditor
             } else {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) {
                         addingCustomGroup = true
                     }
                 } label: {
@@ -103,7 +99,8 @@ struct FiltersTab: View {
                         .font(.callout)
                 }
                 .buttonStyle(.borderless)
-                .foregroundStyle(.tint)
+                .foregroundStyle(Theme.amber)
+                .hoverFeedback(outset: 2)
             }
         }
     }
@@ -126,7 +123,7 @@ struct FiltersTab: View {
             } else {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Theme.amber)
                     .frame(width: 18)
             }
 
@@ -136,7 +133,7 @@ struct FiltersTab: View {
 
             Text(verbatim: formatGroupPorts(group))
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.amber)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
@@ -151,6 +148,7 @@ struct FiltersTab: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
+            .hoverFeedback(outset: 2)
             .disabled((idx ?? 0) <= 0)
             .help("filters.moveUp")
 
@@ -162,6 +160,7 @@ struct FiltersTab: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
+            .hoverFeedback(outset: 2)
             .disabled((idx ?? 0) >= settings.portGroups.count - 1)
             .help("filters.moveDown")
 
@@ -173,6 +172,7 @@ struct FiltersTab: View {
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
+            .hoverFeedback(outset: 2)
             .help("filters.editGroup")
 
             Button {
@@ -183,6 +183,7 @@ struct FiltersTab: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
+            .hoverFeedback(outset: 2)
             .help("filters.removeGroup")
         }
         .padding(.vertical, 8)
@@ -198,7 +199,7 @@ struct FiltersTab: View {
                 } else {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 11))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Theme.amber)
                         .frame(width: 18)
                 }
 
@@ -213,7 +214,7 @@ struct FiltersTab: View {
             HStack {
                 Text("filters.groupPortsHint")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkDim)
                 Spacer()
                 Button("Cancel") { cancelEdit() }
                     .buttonStyle(.borderless)
@@ -242,10 +243,10 @@ struct FiltersTab: View {
             HStack {
                 Text("filters.groupPortsHint")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.inkDim)
                 Spacer()
                 Button("Cancel") {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.12)) {
                         addingCustomGroup = false
                         newGroupName = ""
                         newGroupPorts = ""
@@ -263,7 +264,7 @@ struct FiltersTab: View {
     // MARK: - Suggested groups (presets)
 
     private var suggestedGroupsCard: some View {
-        Card(
+        SettingsSection(
             title: "filters.suggested.title",
             subtitle: "filters.suggested.subtitle"
         ) {
@@ -271,7 +272,7 @@ struct FiltersTab: View {
                 ForEach(Array(PresetGroups.all.enumerated()), id: \.element.id) { idx, preset in
                     presetRow(preset)
                     if idx < PresetGroups.all.count - 1 {
-                        Divider()
+                        SettingsDivider()
                     }
                 }
             }
@@ -279,43 +280,43 @@ struct FiltersTab: View {
     }
 
     private func presetRow(_ preset: PresetGroups.Preset) -> some View {
-        let on = isPresetEnabled(preset.id)
+        let ports = formatPresetPorts(preset)
         return HStack(spacing: 10) {
-            Toggle(isOn: Binding(
-                get: { on },
+            Toggle(preset.name, isOn: Binding(
+                get: { isPresetEnabled(preset.id) },
                 set: { _ in togglePreset(preset) }
-            )) {
-                EmptyView()
-            }
+            ))
             .labelsHidden()
             .toggleStyle(.checkbox)
+            .accessibilityLabel(Text(verbatim: "\(preset.name), \(ports)"))
 
             Text(preset.name)
-                .font(.body)
                 .frame(width: 170, alignment: .leading)
+                .accessibilityHidden(true)
 
-            Text(verbatim: formatPresetPorts(preset))
+            Text(verbatim: ports)
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.inkDim)
                 .lineLimit(1)
-                .truncationMode(.tail)
+                .accessibilityHidden(true)
 
-            Spacer()
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture { togglePreset(preset) }
+        .hoverFeedback()
     }
 
     // MARK: - Blocklist
 
     private var blocklistCard: some View {
-        Card(title: "filters.blocklist.title", subtitle: "filters.blocklist.subtitle") {
+        SettingsSection(title: "filters.blocklist.title", subtitle: "filters.blocklist.subtitle") {
             if settings.processBlocklist.isEmpty {
                 Text("No processes hidden.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkDim)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(settings.processBlocklist.enumerated()), id: \.element) { idx, name in
@@ -331,16 +332,17 @@ struct FiltersTab: View {
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.borderless)
+                            .hoverFeedback(outset: 2)
                         }
                         .padding(.vertical, 6)
                         if idx < settings.processBlocklist.count - 1 {
-                            Divider()
+                            SettingsDivider()
                         }
                     }
                 }
             }
 
-            Divider().padding(.vertical, 4)
+            SettingsDivider().padding(.vertical, 4)
 
             HStack {
                 TextField("e.g. rapportd", text: $newBlockItem)
@@ -427,7 +429,7 @@ struct FiltersTab: View {
         settings.portGroups.append(group)
         newGroupName = ""
         newGroupPorts = ""
-        withAnimation(.easeInOut(duration: 0.12)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.12)) {
             addingCustomGroup = false
         }
     }
@@ -467,44 +469,5 @@ struct FiltersTab: View {
             }
         }
         return (ports, ranges)
-    }
-}
-
-// MARK: - Card chrome
-
-/// Lightweight grouped-content card. Replaces SwiftUI's `Form { Section }`
-/// which on macOS forces a heavy inset look. Used by FiltersTab to give
-/// each block a clear visual boundary without nesting everything in
-/// `.formStyle(.grouped)`.
-private struct Card<Content: View>: View {
-    let title: LocalizedStringKey
-    var subtitle: LocalizedStringKey? = nil
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                content()
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.primary.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-            )
-        }
     }
 }

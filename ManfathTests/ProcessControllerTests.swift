@@ -21,6 +21,23 @@ final class ProcessControllerTests: XCTestCase {
         XCTAssertNotNil(details.workingDirectory)
     }
 
+    func testConcurrentInspectionsOfOnePIDShareTheRead() async throws {
+        let fixture = InspectionFixture()
+        let controller = ProcessController { pid in try await fixture.read(pid: pid) }
+
+        try await withThrowingTaskGroup(of: ProcessDetails.self) { group in
+            for _ in 0..<8 {
+                group.addTask { try await controller.inspect(pid: 123) }
+            }
+            for try await details in group {
+                XCTAssertEqual(details.pid, 123)
+            }
+        }
+
+        let calls = await fixture.calls
+        XCTAssertEqual(calls, 1)
+    }
+
     // MARK: - Kill
 
     func testKillNonexistentPidReturnsNotFound() async {
@@ -63,5 +80,15 @@ final class ProcessControllerTests: XCTestCase {
         XCTAssertNil(details.workingDirectory)
         XCTAssertNil(details.commandPath)
         XCTAssertEqual(details.openFileCount, 0)
+    }
+}
+
+private actor InspectionFixture {
+    private(set) var calls = 0
+
+    func read(pid: Int32) async throws -> ProcessDetails {
+        calls += 1
+        try await Task.sleep(for: .milliseconds(100))
+        return ProcessDetails(pid: pid, commandPath: nil, workingDirectory: nil, openFileCount: 0)
     }
 }

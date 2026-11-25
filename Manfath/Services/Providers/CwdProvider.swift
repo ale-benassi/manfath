@@ -25,6 +25,7 @@ public struct CwdProvider: EnrichmentProvider {
 
     public func enrich(_ port: PortInfo) async -> Enrichment {
         let details = try? await processController.inspect(pid: port.pid)
+        guard !Task.isCancelled else { return Enrichment() }
         let args = ProcessArgsService.read(pid: port.pid)
         let fs = RealFileSystem()
 

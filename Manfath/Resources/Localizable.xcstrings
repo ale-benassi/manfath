@@ -2279,6 +2279,22 @@
         }
       }
     },
+    "settings.window.title" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "إعدادات Manfath"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Manfath Settings"
+          }
+        }
+      }
+    },
     "Share publicly" : {
       "extractionState" : "manual",
       "localizations" : {
